@@ -1,301 +1,585 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase-server";
 import { hasSupabaseEnv, isDemoMode } from "@/lib/env";
 
 async function dbOrDemo() {
-  if (isDemoMode() || !hasSupabaseEnv()) return null;
+  if (isDemoMode() || !hasSupabaseEnv()) {
+    return null;
+  }
+
   return createClient();
 }
 
-const text = (formData: FormData, key: string, fallback = "") => String(formData.get(key) || fallback).trim();
-const number = (formData: FormData, key: string, fallback = 0) => Number(formData.get(key) || fallback);
-const checked = (formData: FormData, key: string) => formData.get(key) === "on" || formData.get(key) === "true";
-const list = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
+/* =========================================================
+   MEALS
+   ========================================================= */
 
-async function uploadMealImage(db: Awaited<ReturnType<typeof createClient>>, file: FormDataEntryValue | null) {
-  if (!(file instanceof File) || file.size === 0) return null;
-  if (!file.type.startsWith("image/")) throw new Error("Meal image must be an image file.");
-  if (file.size > 5 * 1024 * 1024) throw new Error("Meal image must be 5 MB or smaller.");
+export async function createMeal(formData: FormData): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
 
-  const safeExt = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").toLowerCase() || "jpg";
-  const path = `meals/${randomUUID()}.${safeExt}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
-  const { error } = await db.storage.from("meal-images").upload(path, bytes, {
-    contentType: file.type,
-    upsert: false,
-    cacheControl: "3600"
+  const { error } = await db.from("meals").insert({
+    name: String(formData.get("name") || "").trim(),
+    description: String(formData.get("description") || ""),
+    category: String(formData.get("category") || "Daily"),
+    active: true,
   });
-  if (error) throw error;
-  return path;
-}
 
-export async function createMeal(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
+  if (error) return;
 
-  try {
-    const uploadedPath = await uploadMealImage(db, formData.get("image"));
-    const remoteImage = text(formData, "imageUrl");
-    const { error } = await db.from("meals").insert({
-      name: text(formData, "name"),
-      description: text(formData, "description"),
-      category: text(formData, "category", "Daily"),
-      ingredients: text(formData, "ingredients") || null,
-      allergens: list(text(formData, "allergens")),
-      calories: number(formData, "calories") || null,
-      protein_grams: number(formData, "protein") || null,
-      image_path: uploadedPath || remoteImage || null,
-      accent: "green",
-      active: true
-    });
-    if (error) return { ok: false, error: error.message };
-    revalidatePath("/admin/menu");
-    revalidatePath("/menu");
-    revalidatePath("/");
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Unable to create meal." };
-  }
-}
-
-export async function updateMeal(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-
-  try {
-    const mealId = text(formData, "mealId");
-    const existingImage = text(formData, "existingImage");
-    const uploadedPath = await uploadMealImage(db, formData.get("image"));
-    const remoteImage = text(formData, "imageUrl");
-
-    const { error } = await db.from("meals").update({
-      name: text(formData, "name"),
-      description: text(formData, "description"),
-      category: text(formData, "category", "Daily"),
-      ingredients: text(formData, "ingredients") || null,
-      allergens: list(text(formData, "allergens")),
-      calories: number(formData, "calories") || null,
-      protein_grams: number(formData, "protein") || null,
-      image_path: uploadedPath || remoteImage || existingImage || null,
-      active: checked(formData, "active"),
-      updated_at: new Date().toISOString()
-    }).eq("id", mealId);
-
-    if (error) return { ok: false, error: error.message };
-    revalidatePath("/admin/menu");
-    revalidatePath("/menu");
-    revalidatePath("/");
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Unable to update meal." };
-  }
-}
-
-export async function toggleMealActive(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.from("meals").update({ active: text(formData, "nextActive") === "true" }).eq("id", text(formData, "mealId"));
-  if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/menu");
   revalidatePath("/menu");
-  revalidatePath("/");
-  return { ok: true };
 }
 
-export async function createHub(formData: FormData) {
+export async function updateMeal(formData: FormData): Promise<void> {
   const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const slug = text(formData, "name").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (!db) return;
+
+  const mealId = String(formData.get("mealId") || "");
+
+  if (!mealId) return;
+
+  const updates: Record<string, unknown> = {};
+
+  if (formData.has("name")) {
+    updates.name = String(formData.get("name") || "").trim();
+  }
+
+  if (formData.has("description")) {
+    updates.description = String(formData.get("description") || "");
+  }
+
+  if (formData.has("category")) {
+    updates.category = String(formData.get("category") || "Daily");
+  }
+
+  if (formData.has("ingredients")) {
+    updates.ingredients = String(formData.get("ingredients") || "");
+  }
+
+  if (formData.has("calories")) {
+    const value = Number(formData.get("calories"));
+    updates.calories = Number.isFinite(value) ? value : null;
+  }
+
+  if (formData.has("proteinGrams")) {
+    const value = Number(formData.get("proteinGrams"));
+    updates.protein_grams = Number.isFinite(value) ? value : null;
+  }
+
+  if (formData.has("active")) {
+    updates.active = String(formData.get("active")) === "true";
+  }
+
+  if (Object.keys(updates).length === 0) return;
+
+  const { error } = await db
+    .from("meals")
+    .update(updates)
+    .eq("id", mealId);
+
+  if (error) return;
+
+  revalidatePath("/admin/menu");
+  revalidatePath("/menu");
+}
+
+export async function toggleMealActive(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const mealId = String(formData.get("mealId") || "");
+
+  if (!mealId) return;
+
+  const requested = formData.get("active");
+
+  let active: boolean;
+
+  if (requested !== null) {
+    active =
+      String(requested) === "true" ||
+      String(requested) === "1" ||
+      String(requested) === "on";
+  } else {
+    const { data, error } = await db
+      .from("meals")
+      .select("active")
+      .eq("id", mealId)
+      .single();
+
+    if (error || !data) return;
+
+    active = !Boolean(data.active);
+  }
+
+  const { error } = await db
+    .from("meals")
+    .update({ active })
+    .eq("id", mealId);
+
+  if (error) return;
+
+  revalidatePath("/admin/menu");
+  revalidatePath("/menu");
+}
+
+/* =========================================================
+   HUBS
+   ========================================================= */
+
+export async function createHub(formData: FormData): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
   const { error } = await db.from("hubs").insert({
-    name: text(formData, "name"),
-    slug: `${slug}-${Date.now().toString().slice(-5)}`,
-    type: text(formData, "type", "hostel"),
-    area: text(formData, "area"),
-    address: text(formData, "address"),
-    capacity: number(formData, "capacity", 30),
-    active: true
+    name: String(formData.get("name") || "").trim(),
+    slug:
+      String(formData.get("slug") || "").trim() ||
+      String(formData.get("name") || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, ""),
+    type: String(formData.get("type") || "hostel"),
+    area: String(formData.get("area") || ""),
+    address: String(formData.get("address") || ""),
+    contact_name: String(formData.get("contactName") || "") || null,
+    contact_phone: String(formData.get("contactPhone") || "") || null,
+    capacity: Number(formData.get("capacity") || 30),
+    active: true,
   });
-  if (error) return { ok: false, error: error.message };
+
+  if (error) return;
+
   revalidatePath("/admin/hubs");
-  revalidatePath("/hubs");
-  return { ok: true };
+  revalidatePath("/app");
 }
 
-export async function approvePayment(formData: FormData) {
+ /* =========================================================
+    MENU CALENDAR
+    ========================================================= */
+
+export async function createMenuSlot(
+  formData: FormData
+): Promise<void> {
   const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.rpc("approve_manual_payment", { p_payment_id: text(formData, "paymentId") });
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/payments");
-  revalidatePath("/admin");
-  return { ok: true };
-}
+  if (!db) return;
 
-export async function createCoupon(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.from("coupons").insert({
-    code: text(formData, "code").toUpperCase(),
-    kind: text(formData, "kind", "bonus_credit"),
-    value: number(formData, "value"),
-    max_uses: number(formData, "maxUses", 100),
-    active: true
-  });
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/promos");
-  return { ok: true };
-}
+  const date = String(formData.get("date") || "");
+  const period = String(formData.get("period") || "lunch");
+  const mealId = String(formData.get("mealId") || "");
+  const price = Number(formData.get("price") || 0);
+  const creditCost = Number(formData.get("creditCost") || 1);
+  const capacity = Number(formData.get("capacity") || 50);
+  const cutoff = String(formData.get("cutoff") || "09:30");
 
-export async function updateBusinessSettings(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
+  if (!date || !mealId) return;
 
-  const lunch = text(formData, "lunchCutoff", "09:30");
-  const dinner = text(formData, "dinnerCutoff", "15:30");
-  const lunchWindow = text(formData, "lunchWindow", "12:00-14:00");
-  const dinnerWindow = text(formData, "dinnerWindow", "18:30-20:30");
-  const beforeCutoff = text(formData, "beforeCutoff", "full_credit_return");
-  const afterCutoff = text(formData, "afterCutoff", "admin_exception_only");
+  const cutoffAt = new Date(
+    `${date}T${cutoff}:00+05:00`
+  ).toISOString();
 
-  const { error } = await db.from("app_settings").upsert([
-    { key: "cutoffs", value: { lunch, dinner }, public_read: true },
-    { key: "delivery_windows", value: { lunch: lunchWindow, dinner: dinnerWindow }, public_read: true },
-    { key: "cancellation_policy", value: { before_cutoff: beforeCutoff, after_cutoff: afterCutoff }, public_read: true }
-  ], { onConflict: "key" });
-
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/settings");
-  return { ok: true };
-}
-
-export async function createMenuSlot(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const date = text(formData, "date");
-  const period = text(formData, "period");
-  const cutoff = text(formData, "cutoff", period === "dinner" ? "15:30" : "09:30");
-  const cutoffAt = new Date(`${date}T${cutoff}:00+05:00`).toISOString();
   const { error } = await db.from("menu_slots").insert({
     service_date: date,
     period,
-    meal_id: text(formData, "mealId"),
-    price: number(formData, "price"),
-    credit_cost: number(formData, "creditCost", 1),
-    capacity: number(formData, "capacity", 50),
+    meal_id: mealId,
+    price,
+    credit_cost: creditCost,
+    capacity,
     cutoff_at: cutoffAt,
-    active: true
+    active: true,
   });
-  if (error) return { ok: false, error: error.message };
+
+  if (error) return;
+
   revalidatePath("/admin/calendar");
   revalidatePath("/menu");
-  revalidatePath("/");
-  return { ok: true };
+  revalidatePath("/app");
 }
 
-export async function updateMenuSlot(formData: FormData) {
+export async function updateMenuSlot(
+  formData: FormData
+): Promise<void> {
   const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const date = text(formData, "date");
-  const period = text(formData, "period");
-  const cutoff = text(formData, "cutoff", period === "dinner" ? "15:30" : "09:30");
-  const cutoffAt = new Date(`${date}T${cutoff}:00+05:00`).toISOString();
-  const { error } = await db.from("menu_slots").update({
-    service_date: date,
-    period,
-    meal_id: text(formData, "mealId"),
-    price: number(formData, "price"),
-    credit_cost: number(formData, "creditCost", 1),
-    capacity: number(formData, "capacity", 50),
-    cutoff_at: cutoffAt,
-    active: checked(formData, "active"),
-    updated_at: new Date().toISOString()
-  }).eq("id", text(formData, "slotId"));
-  if (error) return { ok: false, error: error.message };
+  if (!db) return;
+
+  const slotId = String(formData.get("slotId") || "");
+
+  if (!slotId) return;
+
+  const updates: Record<string, unknown> = {};
+
+  if (formData.has("date")) {
+    updates.service_date = String(formData.get("date") || "");
+  }
+
+  if (formData.has("period")) {
+    updates.period = String(formData.get("period") || "lunch");
+  }
+
+  if (formData.has("mealId")) {
+    updates.meal_id = String(formData.get("mealId") || "");
+  }
+
+  if (formData.has("price")) {
+    updates.price = Number(formData.get("price") || 0);
+  }
+
+  if (formData.has("creditCost")) {
+    updates.credit_cost = Number(formData.get("creditCost") || 1);
+  }
+
+  if (formData.has("capacity")) {
+    updates.capacity = Number(formData.get("capacity") || 50);
+  }
+
+  if (formData.has("cutoff")) {
+    const date = String(formData.get("date") || "");
+
+    if (date) {
+      updates.cutoff_at = new Date(
+        `${date}T${String(formData.get("cutoff"))}:00+05:00`
+      ).toISOString();
+    }
+  }
+
+  if (formData.has("active")) {
+    updates.active =
+      String(formData.get("active")) === "true" ||
+      String(formData.get("active")) === "1" ||
+      String(formData.get("active")) === "on";
+  }
+
+  if (Object.keys(updates).length === 0) return;
+
+  const { error } = await db
+    .from("menu_slots")
+    .update(updates)
+    .eq("id", slotId);
+
+  if (error) return;
+
   revalidatePath("/admin/calendar");
   revalidatePath("/menu");
-  revalidatePath("/");
-  return { ok: true };
+  revalidatePath("/app");
 }
 
-export async function createCreditPack(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.from("credit_packs").insert({
-    name: text(formData, "name"),
-    credits: number(formData, "credits"),
-    price: number(formData, "price"),
-    validity_days: number(formData, "validityDays") || null,
-    description: text(formData, "description"),
-    bonus_credits: number(formData, "bonusCredits"),
-    featured: checked(formData, "featured"),
-    active: true
-  });
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/plans");
-  revalidatePath("/plans");
-  revalidatePath("/");
-  return { ok: true };
-}
+/* =========================================================
+   CUSTOMERS / WALLET
+   ========================================================= */
 
-export async function updateCreditPack(formData: FormData) {
+export async function adjustWallet(
+  formData: FormData
+): Promise<void> {
   const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.from("credit_packs").update({
-    name: text(formData, "name"),
-    credits: number(formData, "credits"),
-    price: number(formData, "price"),
-    validity_days: number(formData, "validityDays") || null,
-    description: text(formData, "description"),
-    bonus_credits: number(formData, "bonusCredits"),
-    featured: checked(formData, "featured"),
-    active: checked(formData, "active"),
-    updated_at: new Date().toISOString()
-  }).eq("id", text(formData, "packId"));
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/plans");
-  revalidatePath("/plans");
-  revalidatePath("/");
-  return { ok: true };
-}
+  if (!db) return;
 
-export async function updateOrderStatus(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const status = text(formData, "status");
-  const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
-  if (status === "delivered" || status === "collected") patch.delivered_at = new Date().toISOString();
-  if (status === "cancelled") patch.cancelled_at = new Date().toISOString();
-  const { error } = await db.from("orders").update(patch).eq("id", text(formData, "orderId"));
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/orders");
-  revalidatePath("/admin");
-  revalidatePath("/admin/kitchen");
-  revalidatePath("/admin/delivery");
-  return { ok: true };
-}
+  const userId = String(
+    formData.get("userId") ||
+      formData.get("customerId") ||
+      formData.get("id") ||
+      ""
+  );
 
-export async function setCustomerBlocked(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.from("profiles").update({ blocked: text(formData, "blocked") === "true", updated_at: new Date().toISOString() }).eq("id", text(formData, "userId"));
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/customers");
-  return { ok: true };
-}
+  const amount = Number(formData.get("amount") || 0);
 
-export async function adjustWallet(formData: FormData) {
-  const db = await dbOrDemo();
-  if (!db) return { ok: true, demo: true };
-  const { error } = await db.rpc("admin_adjust_wallet", {
-    p_user_id: text(formData, "userId"),
-    p_amount: number(formData, "amount"),
-    p_reason: text(formData, "reason")
-  });
-  if (error) return { ok: false, error: error.message };
+  if (!userId || !Number.isFinite(amount) || amount === 0) {
+    return;
+  }
+
+  const { data: wallet, error: walletError } = await db
+    .from("wallets")
+    .select("balance")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (walletError) return;
+
+  const currentBalance = Number(wallet?.balance || 0);
+  const newBalance = currentBalance + amount;
+
+  if (newBalance < 0) return;
+
+  const { error: upsertError } = await db
+    .from("wallets")
+    .upsert({
+      user_id: userId,
+      balance: newBalance,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (upsertError) return;
+
+  const { error: transactionError } = await db
+    .from("wallet_transactions")
+    .insert({
+      user_id: userId,
+      type: "admin_adjustment",
+      amount,
+      reason:
+        String(formData.get("reason") || "Admin wallet adjustment"),
+    });
+
+  if (transactionError) return;
+
   revalidatePath("/admin/customers");
   revalidatePath("/admin/wallets");
-  return { ok: true };
+}
+
+export async function setCustomerBlocked(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const userId = String(
+    formData.get("userId") ||
+      formData.get("customerId") ||
+      formData.get("id") ||
+      ""
+  );
+
+  if (!userId) return;
+
+  const raw = formData.get("blocked");
+
+  const blocked =
+    raw === null
+      ? true
+      : String(raw) === "true" ||
+        String(raw) === "1" ||
+        String(raw) === "on";
+
+  const { error } = await db
+    .from("profiles")
+    .update({ blocked })
+    .eq("id", userId);
+
+  if (error) return;
+
+  revalidatePath("/admin/customers");
+}
+
+/* =========================================================
+   CREDIT PACKS
+   ========================================================= */
+
+export async function createCreditPack(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const { error } = await db.from("credit_packs").insert({
+    name: String(formData.get("name") || "").trim(),
+    credits: Number(formData.get("credits") || 0),
+    price: Number(formData.get("price") || 0),
+    validity_days:
+      Number(formData.get("validityDays") || 0) || null,
+    description: String(formData.get("description") || ""),
+    bonus_credits: Number(formData.get("bonusCredits") || 0),
+    featured:
+      String(formData.get("featured") || "") === "true" ||
+      String(formData.get("featured") || "") === "1" ||
+      String(formData.get("featured") || "") === "on",
+    active: true,
+  });
+
+  if (error) return;
+
+  revalidatePath("/admin/plans");
+  revalidatePath("/plans");
+  revalidatePath("/app/payments");
+}
+
+export async function updateCreditPack(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const packId = String(
+    formData.get("packId") ||
+      formData.get("id") ||
+      ""
+  );
+
+  if (!packId) return;
+
+  const updates: Record<string, unknown> = {};
+
+  if (formData.has("name")) {
+    updates.name = String(formData.get("name") || "").trim();
+  }
+
+  if (formData.has("credits")) {
+    updates.credits = Number(formData.get("credits") || 0);
+  }
+
+  if (formData.has("price")) {
+    updates.price = Number(formData.get("price") || 0);
+  }
+
+  if (formData.has("validityDays")) {
+    updates.validity_days =
+      Number(formData.get("validityDays") || 0) || null;
+  }
+
+  if (formData.has("description")) {
+    updates.description = String(formData.get("description") || "");
+  }
+
+  if (formData.has("bonusCredits")) {
+    updates.bonus_credits = Number(
+      formData.get("bonusCredits") || 0
+    );
+  }
+
+  if (formData.has("featured")) {
+    updates.featured =
+      String(formData.get("featured")) === "true" ||
+      String(formData.get("featured")) === "1" ||
+      String(formData.get("featured")) === "on";
+  }
+
+  if (formData.has("active")) {
+    updates.active =
+      String(formData.get("active")) === "true" ||
+      String(formData.get("active")) === "1" ||
+      String(formData.get("active")) === "on";
+  }
+
+  if (Object.keys(updates).length === 0) return;
+
+  const { error } = await db
+    .from("credit_packs")
+    .update(updates)
+    .eq("id", packId);
+
+  if (error) return;
+
+  revalidatePath("/admin/plans");
+  revalidatePath("/plans");
+  revalidatePath("/app/payments");
+}
+
+/* =========================================================
+   ORDERS
+   ========================================================= */
+
+export async function updateOrderStatus(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const orderId = String(formData.get("orderId") || "");
+  const status = String(formData.get("status") || "");
+
+  if (!orderId || !status) return;
+
+  const updates: Record<string, unknown> = {
+    status,
+  };
+
+  if (status === "delivered") {
+    updates.delivered_at = new Date().toISOString();
+  }
+
+  if (status === "cancelled") {
+    updates.cancelled_at = new Date().toISOString();
+  }
+
+  const { error } = await db
+    .from("orders")
+    .update(updates)
+    .eq("id", orderId);
+
+  if (error) return;
+
+  revalidatePath("/admin/orders");
+  revalidatePath("/app/orders");
+}
+
+/* =========================================================
+   PAYMENTS
+   ========================================================= */
+
+export async function approvePayment(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const { error } = await db.rpc("approve_manual_payment", {
+    p_payment_id: String(formData.get("paymentId") || ""),
+  });
+
+  if (error) return;
+
+  revalidatePath("/admin/payments");
+  revalidatePath("/app/payments");
+}
+
+/* =========================================================
+   COUPONS
+   ========================================================= */
+
+export async function createCoupon(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const { error } = await db.from("coupons").insert({
+    code: String(formData.get("code") || "")
+      .trim()
+      .toUpperCase(),
+    kind: String(formData.get("kind") || "bonus_credit"),
+    value: Number(formData.get("value") || 0),
+    max_uses:
+      Number(formData.get("maxUses") || 0) || null,
+    active: true,
+  });
+
+  if (error) return;
+
+  revalidatePath("/admin/promos");
+}
+
+/* =========================================================
+   SETTINGS
+   ========================================================= */
+
+export async function updateBusinessSettings(
+  formData: FormData
+): Promise<void> {
+  const db = await dbOrDemo();
+  if (!db) return;
+
+  const lunch = String(
+    formData.get("lunchCutoff") || "09:30"
+  );
+
+  const dinner = String(
+    formData.get("dinnerCutoff") || "15:30"
+  );
+
+  const { error } = await db.from("app_settings").upsert({
+    key: "cutoffs",
+    value: {
+      lunch,
+      dinner,
+    },
+    public_read: true,
+  });
+
+  if (error) return;
+
+  revalidatePath("/admin/settings");
 }
