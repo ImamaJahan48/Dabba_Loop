@@ -1,0 +1,24 @@
+DabbaLoop Hero + Login Update
+
+WHAT CHANGED
+- Hero now uses one large real meal photo.
+- Photo gently floats and slowly zooms/pans for motion.
+- Floating status cards move independently.
+- Responsive mobile/tablet behavior added.
+- Reduced-motion accessibility respected.
+- Login screen now correctly tells you whether Demo Mode or real Supabase authentication is active.
+- Two optional Windows helpers are included:
+  ENABLE-DEMO-MODE.cmd
+  ENABLE-REAL-AUTH.cmd
+
+INSTALL
+1. Stop npm run dev with Ctrl+C.
+2. Copy/extract this project over your existing project, or use the replacement-only ZIP.
+3. Replace files when Windows asks.
+4. Delete .next if needed.
+5. Run npm run dev.
+
+LOGIN NOTE
+If you see 'Invalid login credentials', real Supabase authentication is active.
+For local design testing, double-click ENABLE-DEMO-MODE.cmd and restart npm run dev.
+To switch back to real accounts later, double-click ENABLE-REAL-AUTH.cmd and restart.

@@ -1,0 +1,35 @@
+{
+  "name": "flexible-meal-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "setup": "node scripts/setup.mjs",
+    "db:push": "npx supabase db push",
+    "db:diff": "npx supabase db diff",
+    "db:local": "npx supabase start",
+    "db:reset": "npx supabase db reset",
+    "admin:promote": "node scripts/promote-admin.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "latest",
+    "@supabase/supabase-js": "latest",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "next": "16.3.3",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "16.3.3",
+    "typescript": "latest"
+  }
+}
